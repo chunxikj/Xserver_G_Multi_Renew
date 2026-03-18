@@ -67,20 +67,33 @@ async function sendTG(statusIcon, statusText, extra = '', imagePath = null) {
   console.log('XServer 自动延期');
   console.log('='.repeat(50));
 
-  // Check 48h + random 6h timing
+// Smart timing logic
   if (process.env.GITHUB_EVENT_NAME === 'schedule') {
     const status = loadStatus();
     const lastSuccess = status[ACC]?.lastSuccess || 0;
     const now = Date.now();
-    
-    if (lastSuccess && now < lastSuccess + 48 * 3600 * 1000) {
-      console.log(`⏳ 冷却中，跳过 ${ACC}`);
-      process.exit(0);
+    const hours48 = 48 * 3600 * 1000;
+
+    if (lastSuccess) {
+      // 后续签到：上次成功后必须等待48小时
+      const elapsed = now - lastSuccess;
+      if (elapsed < hours48) {
+        const remaining = hours48 - elapsed;
+        const remainingHours = Math.floor(remaining / 3600000);
+        const remainingMins = Math.floor((remaining % 3600000) / 60000);
+        console.log(`⏳ 冷却中，距下次签到还需 ${remainingHours}小时${remainingMins}分钟`);
+        process.exit(0);
+      }
+      // 已过48小时，随机延迟0-6小时
+      const delaySec = Math.floor(Math.random() * 6 * 3600);
+      console.log(`🕒 后续签到 - 随机延迟: ${Math.floor(delaySec / 3600)}小时${Math.floor((delaySec % 3600) / 60)}分钟...`);
+      await new Promise(r => setTimeout(r, delaySec * 1000));
+    } else {
+      // 首次签到：随机延迟0-6小时（确保当天能签到）
+      const delaySec = Math.floor(Math.random() * 6 * 3600);
+      console.log(`🆕 首次签到 - 随机延迟: ${Math.floor(delaySec / 3600)}小时${Math.floor((delaySec % 3600) / 60)}分钟...`);
+      await new Promise(r => setTimeout(r, delaySec * 1000));
     }
-    
-    const delaySec = Math.floor(Math.random() * 6 * 3600);
-    console.log(`🕒 随机延迟: ${Math.floor(delaySec / 3600)}小时${Math.floor((delaySec % 3600) / 60)}分钟...`);
-    await new Promise(r => setTimeout(r, delaySec * 1000));
   }
 
   // Browser launch options
@@ -167,11 +180,19 @@ async function sendTG(statusIcon, statusText, extra = '', imagePath = null) {
       await page.screenshot({ path: 'success.png' });
       await sendTG('✅', '续签成功', 'XServer 实例已延期', 'success.png');
       
-    } catch (e) {
-      console.log('⚠️ 未找到延期按钮，可能已完成');
-      await page.screenshot({ path: 'skip.png' });
+} catch (e) {
+    console.log('⚠️ 未找到延期按钮');
+    await page.screenshot({ path: 'skip.png' });
+    
+    const status = loadStatus();
+    const isFirstRun = !status[ACC]?.lastSuccess;
+    
+    if (isFirstRun) {
+      await sendTG('🕐', '首次签到 - 等待中', '签到按钮尚未出现，请等待48小时后重试。脚本已正常运行，明天将自动重试。', 'skip.png');
+    } else {
       await sendTG('⚠️', '自动跳过', '未发现延期按钮', 'skip.png');
     }
+  }
 
   } catch (error) {
     console.log(`❌ 流程失败: ${error.message}`);
